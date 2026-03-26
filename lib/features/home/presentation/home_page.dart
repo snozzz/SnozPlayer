@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/app_scope.dart';
 import '../../../app/theme/app_palette.dart';
+import '../../../data/models/watch_record.dart';
+import '../../player/presentation/player_page.dart';
 
 class HomePage extends StatelessWidget {
-  const HomePage({super.key});
+  const HomePage({required this.onOpenLibrary, super.key});
+
+  final VoidCallback onOpenLibrary;
 
   @override
   Widget build(BuildContext context) {
+    final controller = SnozPlayerScope.of(context);
     final textTheme = Theme.of(context).textTheme;
+    final records = controller.records.take(3).toList();
 
     return DecoratedBox(
       decoration: const BoxDecoration(
@@ -111,7 +118,7 @@ class HomePage extends StatelessWidget {
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: const Text(
-                            'First milestone',
+                            'Playback module ready',
                             style: TextStyle(
                               color: AppPalette.white,
                               fontWeight: FontWeight.w700,
@@ -120,7 +127,7 @@ class HomePage extends StatelessWidget {
                         ),
                         const SizedBox(height: 18),
                         Text(
-                          'Pocket cinema, softer edges, faster gestures.',
+                          'Import a video and bounce between soft UI and sharp playback controls.',
                           style: textTheme.displaySmall?.copyWith(
                             color: AppPalette.white,
                             fontSize: 34,
@@ -129,36 +136,17 @@ class HomePage extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'The next build adds local videos, playback speed presets, '
-                          'and the hold-for-3x action on both screen edges.',
+                          'Choose a speed, hold either side to hit 3x, then let go '
+                          'to return to your chosen rate.',
                           style: textTheme.bodyLarge?.copyWith(
                             color: AppPalette.white.withValues(alpha: 0.92),
                           ),
                         ),
                         const SizedBox(height: 24),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: () {},
-                                icon: const Icon(Icons.video_library_rounded),
-                                label: const Text('Prepare Library'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Container(
-                              width: 58,
-                              height: 58,
-                              decoration: const BoxDecoration(
-                                color: AppPalette.white,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.favorite_rounded,
-                                color: AppPalette.berry,
-                              ),
-                            ),
-                          ],
+                        FilledButton.icon(
+                          onPressed: onOpenLibrary,
+                          icon: const Icon(Icons.video_library_rounded),
+                          label: const Text('Go to Library'),
                         ),
                       ],
                     ),
@@ -171,7 +159,7 @@ class HomePage extends StatelessWidget {
                           color: AppPalette.mint,
                           icon: Icons.speed_rounded,
                           title: 'Speed presets',
-                          subtitle: '0.5x to 2.0x with quick chips',
+                          subtitle: '0.5x to 2.0x, restored after boost',
                         ),
                       ),
                       SizedBox(width: 12),
@@ -180,97 +168,33 @@ class HomePage extends StatelessWidget {
                           color: AppPalette.sky,
                           icon: Icons.touch_app_rounded,
                           title: 'Hold for 3x',
-                          subtitle: 'Press either side to boost',
+                          subtitle: 'Long press left or right to burst ahead',
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 24),
-                  Text('Continue concept', style: textTheme.titleLarge),
+                  Text('Continue watching', style: textTheme.titleLarge),
                   const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: AppPalette.white.withValues(alpha: 0.84),
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'A Studio Ghibli vibe.mp4',
-                                    style: textTheme.titleMedium?.copyWith(
-                                      color: AppPalette.ink,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Resume from 12:48 at 1.5x',
-                                    style: textTheme.bodyMedium,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppPalette.blush,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: const Text(
-                                '68%',
-                                style: TextStyle(
-                                  color: AppPalette.berry,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: const LinearProgressIndicator(
-                            minHeight: 10,
-                            value: 0.68,
-                            backgroundColor: AppPalette.blush,
-                            color: AppPalette.coral,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text('Roadmap in app', style: textTheme.titleLarge),
-                  const SizedBox(height: 12),
-                  const _RoadmapCard(
-                    title: 'Playback module',
-                    subtitle:
-                        'Media engine, seek bar, gesture overlays, and speed memory.',
-                    accent: AppPalette.coral,
-                  ),
-                  const SizedBox(height: 12),
-                  const _RoadmapCard(
-                    title: 'History module',
-                    subtitle:
-                        'Resume position, recent activity, and last-used speed per video.',
-                    accent: AppPalette.berry,
-                  ),
-                  const SizedBox(height: 12),
-                  const _RoadmapCard(
-                    title: 'Polish module',
-                    subtitle:
-                        'Animations, tablet adaptation, icons, and final visual tuning.',
-                    accent: AppPalette.sky,
-                  ),
+                  if (records.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(22),
+                      decoration: BoxDecoration(
+                        color: AppPalette.white.withValues(alpha: 0.86),
+                        borderRadius: BorderRadius.circular(28),
+                      ),
+                      child: Text(
+                        'Your watch history will appear here after you import a video.',
+                        style: textTheme.bodyLarge,
+                      ),
+                    )
+                  else
+                    ...records.map((record) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _RecentRecordCard(record: record),
+                      );
+                    }),
                 ],
               ),
             ),
@@ -326,53 +250,93 @@ class _FeatureTile extends StatelessWidget {
   }
 }
 
-class _RoadmapCard extends StatelessWidget {
-  const _RoadmapCard({
-    required this.title,
-    required this.subtitle,
-    required this.accent,
-  });
+class _RecentRecordCard extends StatelessWidget {
+  const _RecentRecordCard({required this.record});
 
-  final String title;
-  final String subtitle;
-  final Color accent;
+  final WatchRecord record;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppPalette.white.withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 12,
-            height: 56,
-            decoration: BoxDecoration(
-              color: accent,
-              borderRadius: BorderRadius.circular(999),
-            ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28),
+        onTap: () {
+          Navigator.of(
+            context,
+          ).push(PlayerPage.route(videoPath: record.videoPath));
+        },
+        child: Ink(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppPalette.white.withValues(alpha: 0.86),
+            borderRadius: BorderRadius.circular(28),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleMedium?.copyWith(color: AppPalette.ink),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          record.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(color: AppPalette.ink),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Resume from ${_formatDuration(record.positionMs)} '
+                          'at ${record.lastSpeed}x',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppPalette.blush,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${(record.progress * 100).round()}%',
+                      style: const TextStyle(
+                        color: AppPalette.berry,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  minHeight: 10,
+                  value: record.progress,
+                  backgroundColor: AppPalette.blush,
+                  color: AppPalette.coral,
                 ),
-                const SizedBox(height: 6),
-                Text(subtitle, style: Theme.of(context).textTheme.bodyMedium),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
+}
+
+String _formatDuration(int milliseconds) {
+  final duration = Duration(milliseconds: milliseconds);
+  final minutes = duration.inMinutes;
+  final seconds = duration.inSeconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}';
 }

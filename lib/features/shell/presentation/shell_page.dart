@@ -15,13 +15,23 @@ class ShellPage extends StatefulWidget {
 class _ShellPageState extends State<ShellPage> {
   int _currentIndex = 0;
 
-  static const _pages = [HomePage(), LibraryPage(), ProfilePage()];
-
   @override
   Widget build(BuildContext context) {
+    final pages = [
+      HomePage(
+        onOpenLibrary: () {
+          setState(() {
+            _currentIndex = 1;
+          });
+        },
+      ),
+      const LibraryPage(),
+      const ProfilePage(),
+    ];
+
     return Scaffold(
       extendBody: true,
-      body: IndexedStack(index: _currentIndex, children: _pages),
+      body: IndexedStack(index: _currentIndex, children: pages),
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         child: ClipRRect(
