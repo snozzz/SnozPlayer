@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
+import 'package:screen_brightness/screen_brightness.dart';
 import 'package:video_player/video_player.dart';
+import 'package:volume_controller/volume_controller.dart';
 
 import '../../../app/app_controller.dart';
 import '../../../app/app_scope.dart';
@@ -12,6 +14,8 @@ import '../../../app/theme/app_palette.dart';
 import '../../../data/models/watch_record.dart';
 
 enum _BoostSide { left, right }
+
+enum _AdjustmentType { brightness, volume }
 
 class PlayerPage extends StatefulWidget {
   const PlayerPage({required this.videoPath, super.key});
@@ -34,13 +38,21 @@ class _PlayerPageState extends State<PlayerPage> {
   VideoPlayerController? _videoController;
   Timer? _saveTimer;
   Timer? _chromeTimer;
+  Timer? _adjustmentTimer;
   bool _isInitializing = true;
   bool _isBoosting = false;
   bool _showChrome = true;
+  bool _showAdjustmentIndicator = false;
   double _selectedSpeed = 1.0;
   bool _didKickoff = false;
   double _rippleVerticalFactor = 0.5;
+  double _currentBrightness = 0.5;
+  double _currentVolume = 0.5;
+  double _gestureStartBrightness = 0.5;
+  double _gestureStartVolume = 0.5;
+  double _gestureStartDy = 0;
   _BoostSide _rippleSide = _BoostSide.right;
+  _AdjustmentType _adjustmentType = _AdjustmentType.brightness;
   late final SnozPlayerController _appController;
 
   @override
@@ -53,12 +65,14 @@ class _PlayerPageState extends State<PlayerPage> {
     _didKickoff = true;
     _appController = SnozPlayerScope.of(context);
     unawaited(_enterImmersiveMode());
+    unawaited(_primeSystemLevels());
     _initializeVideo();
   }
 
   @override
   void dispose() {
     _chromeTimer?.cancel();
+    _adjustmentTimer?.cancel();
     _saveTimer?.cancel();
     unawaited(_persistProgress());
     unawaited(_restoreSystemUi());
@@ -78,6 +92,25 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _restoreSystemUi() async {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+  }
+
+  Future<void> _primeSystemLevels() async {
+    try {
+      VolumeController.instance.showSystemUI = false;
+      final brightness = await ScreenBrightness().application;
+      final volume = await VolumeController.instance.getVolume();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _currentBrightness = brightness.clamp(0.0, 1.0);
+        _currentVolume = volume.clamp(0.0, 1.0);
+      });
+    } catch (_) {
+      // Keep defaults if platform values are unavailable.
+    }
   }
 
   Future<void> _initializeVideo() async {
@@ -149,6 +182,33 @@ class _PlayerPageState extends State<PlayerPage> {
       _showChrome = true;
     });
     _scheduleChromeHide();
+  }
+
+  void _showAdjustment(_AdjustmentType type, double value) {
+    _adjustmentTimer?.cancel();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _adjustmentType = type;
+      _showAdjustmentIndicator = true;
+      if (type == _AdjustmentType.brightness) {
+        _currentBrightness = value;
+      } else {
+        _currentVolume = value;
+      }
+    });
+
+    _adjustmentTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _showAdjustmentIndicator = false;
+      });
+    });
   }
 
   Future<void> _persistProgress() async {
@@ -257,6 +317,58 @@ class _PlayerPageState extends State<PlayerPage> {
     _scheduleChromeHide();
   }
 
+  void _handleVerticalStart(_AdjustmentType type, DragStartDetails details) {
+    _gestureStartDy = details.localPosition.dy;
+    _gestureStartBrightness = _currentBrightness;
+    _gestureStartVolume = _currentVolume;
+    _adjustmentTimer?.cancel();
+    _adjustmentType = type;
+  }
+
+  Future<void> _handleVerticalUpdate(
+    _AdjustmentType type,
+    DragUpdateDetails details,
+    double zoneHeight,
+  ) async {
+    final availableHeight = zoneHeight <= 0 ? 1.0 : zoneHeight;
+    final delta =
+        (_gestureStartDy - details.localPosition.dy) / availableHeight;
+
+    if (type == _AdjustmentType.brightness) {
+      final nextBrightness = (_gestureStartBrightness + (delta * 1.4)).clamp(
+        0.0,
+        1.0,
+      );
+      try {
+        await ScreenBrightness().setApplicationScreenBrightness(nextBrightness);
+      } catch (_) {
+        return;
+      }
+      _showAdjustment(_AdjustmentType.brightness, nextBrightness);
+      return;
+    }
+
+    final nextVolume = (_gestureStartVolume + (delta * 1.4)).clamp(0.0, 1.0);
+    try {
+      await VolumeController.instance.setVolume(nextVolume);
+    } catch (_) {
+      return;
+    }
+    _showAdjustment(_AdjustmentType.volume, nextVolume);
+  }
+
+  void _handleVerticalEnd() {
+    _adjustmentTimer?.cancel();
+    _adjustmentTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _showAdjustmentIndicator = false;
+      });
+    });
+  }
+
   void _toggleChrome() {
     if (_isBoosting) {
       return;
@@ -330,6 +442,21 @@ class _PlayerPageState extends State<PlayerPage> {
                                       );
                                     },
                                     onLongPressEnd: (_) => _handleBoostEnd(),
+                                    onVerticalDragStart: (details) {
+                                      _handleVerticalStart(
+                                        _AdjustmentType.brightness,
+                                        details,
+                                      );
+                                    },
+                                    onVerticalDragUpdate: (details) {
+                                      _handleVerticalUpdate(
+                                        _AdjustmentType.brightness,
+                                        details,
+                                        constraints.maxHeight,
+                                      );
+                                    },
+                                    onVerticalDragEnd: (_) =>
+                                        _handleVerticalEnd(),
                                   ),
                                 ),
                                 Expanded(
@@ -342,6 +469,21 @@ class _PlayerPageState extends State<PlayerPage> {
                                       );
                                     },
                                     onLongPressEnd: (_) => _handleBoostEnd(),
+                                    onVerticalDragStart: (details) {
+                                      _handleVerticalStart(
+                                        _AdjustmentType.volume,
+                                        details,
+                                      );
+                                    },
+                                    onVerticalDragUpdate: (details) {
+                                      _handleVerticalUpdate(
+                                        _AdjustmentType.volume,
+                                        details,
+                                        constraints.maxHeight,
+                                      );
+                                    },
+                                    onVerticalDragEnd: (_) =>
+                                        _handleVerticalEnd(),
                                   ),
                                 ),
                               ],
@@ -354,6 +496,21 @@ class _PlayerPageState extends State<PlayerPage> {
                               isVisible: _isBoosting,
                               verticalFactor: _rippleVerticalFactor,
                               side: _rippleSide,
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Center(
+                              child: _AdjustmentIndicator(
+                                isVisible: _showAdjustmentIndicator,
+                                type: _adjustmentType,
+                                value:
+                                    _adjustmentType ==
+                                        _AdjustmentType.brightness
+                                    ? _currentBrightness
+                                    : _currentVolume,
+                              ),
                             ),
                           ),
                         ),
@@ -639,10 +796,16 @@ class _BoostZone extends StatelessWidget {
   const _BoostZone({
     required this.onLongPressStart,
     required this.onLongPressEnd,
+    required this.onVerticalDragStart,
+    required this.onVerticalDragUpdate,
+    required this.onVerticalDragEnd,
   });
 
   final GestureLongPressStartCallback onLongPressStart;
   final GestureLongPressEndCallback onLongPressEnd;
+  final GestureDragStartCallback onVerticalDragStart;
+  final GestureDragUpdateCallback onVerticalDragUpdate;
+  final GestureDragEndCallback onVerticalDragEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -656,7 +819,75 @@ class _BoostZone extends StatelessWidget {
           localPosition: Offset.zero,
         ),
       ),
+      onVerticalDragStart: onVerticalDragStart,
+      onVerticalDragUpdate: onVerticalDragUpdate,
+      onVerticalDragEnd: onVerticalDragEnd,
       child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _AdjustmentIndicator extends StatelessWidget {
+  const _AdjustmentIndicator({
+    required this.isVisible,
+    required this.type,
+    required this.value,
+  });
+
+  final bool isVisible;
+  final _AdjustmentType type;
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = type == _AdjustmentType.brightness
+        ? Icons.light_mode_rounded
+        : Icons.volume_up_rounded;
+    final label = type == _AdjustmentType.brightness ? 'Brightness' : 'Volume';
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: isVisible ? 1 : 0,
+      child: Container(
+        width: 136,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppPalette.white),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppPalette.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 6,
+                value: value,
+                backgroundColor: Colors.white.withValues(alpha: 0.12),
+                color: AppPalette.white,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${(value * 100).round()}%',
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(color: AppPalette.white),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

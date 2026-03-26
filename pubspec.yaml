@@ -38,6 +38,8 @@ dependencies:
   file_picker: ^10.3.10
   shared_preferences: ^2.5.5
   path: ^1.9.1
+  screen_brightness: ^2.1.7
+  volume_controller: ^3.4.3
 
 dev_dependencies:
   flutter_test:
