@@ -190,6 +190,18 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  Future<void> _togglePlaybackByGesture() async {
+    await _togglePlayback();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _showChrome = false;
+    });
+    _scheduleChromeHide();
+  }
+
   Future<void> _setSelectedSpeed(double speed) async {
     final controller = _videoController;
     if (controller == null) {
@@ -273,6 +285,7 @@ class _PlayerPageState extends State<PlayerPage> {
           : GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleChrome,
+              onDoubleTap: _togglePlaybackByGesture,
               child: AnimatedBuilder(
                 animation: controller,
                 builder: (context, _) {
@@ -385,7 +398,7 @@ class _PlayerPageState extends State<PlayerPage> {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              'Smooth playback with quick 3x edge boost',
+                                              'Double tap to play or pause',
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: Theme.of(context)
@@ -452,9 +465,9 @@ class _PlayerPageState extends State<PlayerPage> {
                                     child: Padding(
                                       padding: const EdgeInsets.fromLTRB(
                                         18,
+                                        16,
                                         18,
-                                        18,
-                                        14,
+                                        12,
                                       ),
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
@@ -480,6 +493,94 @@ class _PlayerPageState extends State<PlayerPage> {
                                                         fontWeight:
                                                             FontWeight.w600,
                                                       ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 10),
+                                              PopupMenuButton<double>(
+                                                initialValue: _selectedSpeed,
+                                                onSelected: _setSelectedSpeed,
+                                                color: const Color(0xFF26222B),
+                                                position:
+                                                    PopupMenuPosition.over,
+                                                itemBuilder: (context) {
+                                                  return [
+                                                    for (final speed
+                                                        in _speedPresets)
+                                                      PopupMenuItem<double>(
+                                                        value: speed,
+                                                        child: Row(
+                                                          children: [
+                                                            Text(
+                                                              '${_formatSpeed(speed)}x',
+                                                              style: const TextStyle(
+                                                                color:
+                                                                    AppPalette
+                                                                        .white,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                              ),
+                                                            ),
+                                                            const Spacer(),
+                                                            if (speed ==
+                                                                _selectedSpeed)
+                                                              const Icon(
+                                                                Icons
+                                                                    .check_rounded,
+                                                                color:
+                                                                    AppPalette
+                                                                        .white,
+                                                                size: 18,
+                                                              ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                  ];
+                                                },
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 8,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white
+                                                        .withValues(
+                                                          alpha: 0.12,
+                                                        ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          999,
+                                                        ),
+                                                    border: Border.all(
+                                                      color: Colors.white
+                                                          .withValues(
+                                                            alpha: 0.1,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Text(
+                                                        '${_formatSpeed(_selectedSpeed)}x',
+                                                        style: const TextStyle(
+                                                          color:
+                                                              AppPalette.white,
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      const Icon(
+                                                        Icons
+                                                            .expand_more_rounded,
+                                                        size: 18,
+                                                        color: AppPalette.white,
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
                                               ),
                                             ],
@@ -513,48 +614,6 @@ class _PlayerPageState extends State<PlayerPage> {
                                                   ),
                                                 );
                                               },
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          SingleChildScrollView(
-                                            scrollDirection: Axis.horizontal,
-                                            child: Row(
-                                              children: [
-                                                for (final speed
-                                                    in _speedPresets)
-                                                  Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                          right: 10,
-                                                        ),
-                                                    child: ChoiceChip(
-                                                      label: Text('${speed}x'),
-                                                      selected:
-                                                          speed ==
-                                                          _selectedSpeed,
-                                                      onSelected: (_) =>
-                                                          _setSelectedSpeed(
-                                                            speed,
-                                                          ),
-                                                      selectedColor:
-                                                          AppPalette.white,
-                                                      backgroundColor: Colors
-                                                          .white
-                                                          .withValues(
-                                                            alpha: 0.1,
-                                                          ),
-                                                      labelStyle: TextStyle(
-                                                        color:
-                                                            speed ==
-                                                                _selectedSpeed
-                                                            ? AppPalette.ink
-                                                            : AppPalette.white,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
                                             ),
                                           ),
                                         ],
