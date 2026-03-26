@@ -39,18 +39,24 @@ class _PlayerPageState extends State<PlayerPage> {
   Timer? _saveTimer;
   Timer? _chromeTimer;
   Timer? _adjustmentTimer;
+  Timer? _seekIndicatorTimer;
   bool _isInitializing = true;
   bool _isBoosting = false;
   bool _showChrome = true;
   bool _showAdjustmentIndicator = false;
+  bool _showSeekIndicator = false;
   double _selectedSpeed = 1.0;
   bool _didKickoff = false;
   double _rippleVerticalFactor = 0.5;
   double _currentBrightness = 0.5;
   double _currentVolume = 0.5;
+  double _gestureStartDx = 0;
   double _gestureStartBrightness = 0.5;
   double _gestureStartVolume = 0.5;
   double _gestureStartDy = 0;
+  Duration _seekPreviewPosition = Duration.zero;
+  Duration _seekDelta = Duration.zero;
+  Duration _seekStartPosition = Duration.zero;
   _BoostSide _rippleSide = _BoostSide.right;
   _AdjustmentType _adjustmentType = _AdjustmentType.brightness;
   late final SnozPlayerController _appController;
@@ -73,6 +79,7 @@ class _PlayerPageState extends State<PlayerPage> {
   void dispose() {
     _chromeTimer?.cancel();
     _adjustmentTimer?.cancel();
+    _seekIndicatorTimer?.cancel();
     _saveTimer?.cancel();
     unawaited(_persistProgress());
     unawaited(_restoreSystemUi());
@@ -369,6 +376,86 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  void _handleHorizontalStart(DragStartDetails details) {
+    final controller = _videoController;
+    if (controller == null || _isBoosting) {
+      return;
+    }
+
+    _chromeTimer?.cancel();
+    _seekIndicatorTimer?.cancel();
+    _gestureStartDx = details.localPosition.dx;
+    _seekStartPosition = controller.value.position;
+    _seekPreviewPosition = controller.value.position;
+    _seekDelta = Duration.zero;
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _showSeekIndicator = true;
+    });
+  }
+
+  void _handleHorizontalUpdate(
+    DragUpdateDetails details,
+    double zoneWidth,
+    Duration duration,
+  ) {
+    final controller = _videoController;
+    if (controller == null || _isBoosting) {
+      return;
+    }
+
+    final availableWidth = zoneWidth <= 0 ? 1.0 : zoneWidth;
+    final deltaFactor =
+        (details.localPosition.dx - _gestureStartDx) / availableWidth;
+    final durationMs = duration.inMilliseconds;
+    final maxSeekMs = durationMs <= 0
+        ? 15000
+        : (durationMs * 0.25).round().clamp(30000, 300000);
+    final deltaMs = (deltaFactor * maxSeekMs).round();
+    final targetMs = (_seekStartPosition.inMilliseconds + deltaMs).clamp(
+      0,
+      durationMs <= 0 ? 0 : durationMs,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _showSeekIndicator = true;
+      _seekDelta = Duration(milliseconds: deltaMs);
+      _seekPreviewPosition = Duration(milliseconds: targetMs);
+    });
+  }
+
+  Future<void> _handleHorizontalEnd() async {
+    final controller = _videoController;
+    if (controller == null || _isBoosting) {
+      return;
+    }
+
+    final target = _seekPreviewPosition;
+    if (target != controller.value.position) {
+      await controller.seekTo(target);
+    }
+
+    _seekIndicatorTimer?.cancel();
+    _seekIndicatorTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _showSeekIndicator = false;
+      });
+    });
+
+    _scheduleChromeHide();
+  }
+
   void _toggleChrome() {
     if (_isBoosting) {
       return;
@@ -455,6 +542,16 @@ class _PlayerPageState extends State<PlayerPage> {
                                   },
                                   onVerticalDragEnd: (_) =>
                                       _handleVerticalEnd(),
+                                  onHorizontalDragStart: _handleHorizontalStart,
+                                  onHorizontalDragUpdate: (details) {
+                                    _handleHorizontalUpdate(
+                                      details,
+                                      constraints.maxWidth,
+                                      value.duration,
+                                    );
+                                  },
+                                  onHorizontalDragEnd: (_) =>
+                                      _handleHorizontalEnd(),
                                 ),
                               ),
                               Expanded(
@@ -484,6 +581,16 @@ class _PlayerPageState extends State<PlayerPage> {
                                   },
                                   onVerticalDragEnd: (_) =>
                                       _handleVerticalEnd(),
+                                  onHorizontalDragStart: _handleHorizontalStart,
+                                  onHorizontalDragUpdate: (details) {
+                                    _handleHorizontalUpdate(
+                                      details,
+                                      constraints.maxWidth,
+                                      value.duration,
+                                    );
+                                  },
+                                  onHorizontalDragEnd: (_) =>
+                                      _handleHorizontalEnd(),
                                 ),
                               ),
                             ],
@@ -509,6 +616,17 @@ class _PlayerPageState extends State<PlayerPage> {
                                   _adjustmentType == _AdjustmentType.brightness
                                   ? _currentBrightness
                                   : _currentVolume,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Center(
+                            child: _SeekIndicator(
+                              isVisible: _showSeekIndicator,
+                              targetPosition: _seekPreviewPosition,
+                              delta: _seekDelta,
                             ),
                           ),
                         ),
@@ -786,6 +904,9 @@ class _BoostZone extends StatelessWidget {
     required this.onVerticalDragStart,
     required this.onVerticalDragUpdate,
     required this.onVerticalDragEnd,
+    required this.onHorizontalDragStart,
+    required this.onHorizontalDragUpdate,
+    required this.onHorizontalDragEnd,
   });
 
   final VoidCallback onTap;
@@ -795,6 +916,9 @@ class _BoostZone extends StatelessWidget {
   final GestureDragStartCallback onVerticalDragStart;
   final GestureDragUpdateCallback onVerticalDragUpdate;
   final GestureDragEndCallback onVerticalDragEnd;
+  final GestureDragStartCallback onHorizontalDragStart;
+  final GestureDragUpdateCallback onHorizontalDragUpdate;
+  final GestureDragEndCallback onHorizontalDragEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -813,7 +937,69 @@ class _BoostZone extends StatelessWidget {
       onVerticalDragStart: onVerticalDragStart,
       onVerticalDragUpdate: onVerticalDragUpdate,
       onVerticalDragEnd: onVerticalDragEnd,
+      onHorizontalDragStart: onHorizontalDragStart,
+      onHorizontalDragUpdate: onHorizontalDragUpdate,
+      onHorizontalDragEnd: onHorizontalDragEnd,
       child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _SeekIndicator extends StatelessWidget {
+  const _SeekIndicator({
+    required this.isVisible,
+    required this.targetPosition,
+    required this.delta,
+  });
+
+  final bool isVisible;
+  final Duration targetPosition;
+  final Duration delta;
+
+  @override
+  Widget build(BuildContext context) {
+    final isForward = delta >= Duration.zero;
+    final icon = isForward
+        ? Icons.fast_forward_rounded
+        : Icons.fast_rewind_rounded;
+    final deltaLabel = delta == Duration.zero
+        ? 'Release to seek'
+        : '${isForward ? '+' : '-'}${_formatDelta(delta)}';
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: isVisible ? 1 : 0,
+      child: Container(
+        width: 168,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppPalette.white),
+            const SizedBox(height: 8),
+            Text(
+              deltaLabel,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppPalette.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _formatDuration(targetPosition),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: AppPalette.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1081,4 +1267,13 @@ String _formatDuration(Duration duration) {
 
 String _formatSpeed(double speed) {
   return speed.toStringAsFixed(speed == speed.roundToDouble() ? 0 : 2);
+}
+
+String _formatDelta(Duration duration) {
+  final totalSeconds = duration.inSeconds.abs();
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}';
 }
