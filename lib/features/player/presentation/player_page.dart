@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'package:video_player/video_player.dart';
 
@@ -9,6 +10,8 @@ import '../../../app/app_controller.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/theme/app_palette.dart';
 import '../../../data/models/watch_record.dart';
+
+enum _BoostSide { left, right }
 
 class PlayerPage extends StatefulWidget {
   const PlayerPage({required this.videoPath, super.key});
@@ -30,10 +33,14 @@ class _PlayerPageState extends State<PlayerPage> {
 
   VideoPlayerController? _videoController;
   Timer? _saveTimer;
+  Timer? _chromeTimer;
   bool _isInitializing = true;
   bool _isBoosting = false;
+  bool _showChrome = true;
   double _selectedSpeed = 1.0;
   bool _didKickoff = false;
+  double _rippleVerticalFactor = 0.5;
+  _BoostSide _rippleSide = _BoostSide.right;
   late final SnozPlayerController _appController;
 
   @override
@@ -45,15 +52,32 @@ class _PlayerPageState extends State<PlayerPage> {
 
     _didKickoff = true;
     _appController = SnozPlayerScope.of(context);
+    unawaited(_enterImmersiveMode());
     _initializeVideo();
   }
 
   @override
   void dispose() {
+    _chromeTimer?.cancel();
     _saveTimer?.cancel();
     unawaited(_persistProgress());
+    unawaited(_restoreSystemUi());
     _videoController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _enterImmersiveMode() async {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  Future<void> _restoreSystemUi() async {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   }
 
   Future<void> _initializeVideo() async {
@@ -61,14 +85,17 @@ class _PlayerPageState extends State<PlayerPage> {
     final controller = VideoPlayerController.file(File(widget.videoPath));
 
     await controller.initialize();
+    controller.addListener(_handleVideoTick);
 
     _selectedSpeed = record?.lastSpeed ?? 1.0;
     await controller.setPlaybackSpeed(_selectedSpeed);
 
     if (record != null && record.positionMs > 0) {
-      final maxStart =
-          controller.value.duration - const Duration(milliseconds: 400);
+      final duration = controller.value.duration;
       final safeStart = Duration(milliseconds: record.positionMs);
+      final maxStart = duration > const Duration(milliseconds: 400)
+          ? duration - const Duration(milliseconds: 400)
+          : Duration.zero;
       await controller.seekTo(safeStart < maxStart ? safeStart : maxStart);
     }
 
@@ -77,6 +104,7 @@ class _PlayerPageState extends State<PlayerPage> {
       const Duration(seconds: 2),
       (_) => unawaited(_persistProgress()),
     );
+    _scheduleChromeHide();
 
     if (mounted) {
       setState(() {
@@ -84,6 +112,42 @@ class _PlayerPageState extends State<PlayerPage> {
         _isInitializing = false;
       });
     }
+  }
+
+  void _handleVideoTick() {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {});
+  }
+
+  void _scheduleChromeHide() {
+    _chromeTimer?.cancel();
+    if (_isBoosting) {
+      return;
+    }
+
+    _chromeTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted || _isBoosting) {
+        return;
+      }
+
+      setState(() {
+        _showChrome = false;
+      });
+    });
+  }
+
+  void _showChromeNow() {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _showChrome = true;
+    });
+    _scheduleChromeHide();
   }
 
   Future<void> _persistProgress() async {
@@ -116,14 +180,12 @@ class _PlayerPageState extends State<PlayerPage> {
       return;
     }
 
+    _showChromeNow();
+
     if (controller.value.isPlaying) {
       await controller.pause();
     } else {
       await controller.play();
-    }
-
-    if (mounted) {
-      setState(() {});
     }
   }
 
@@ -138,22 +200,63 @@ class _PlayerPageState extends State<PlayerPage> {
       await controller.setPlaybackSpeed(speed);
     }
 
-    if (mounted) {
-      setState(() {});
-    }
+    _showChromeNow();
   }
 
-  Future<void> _setBoosting(bool isBoosting) async {
+  Future<void> _handleBoostStart(
+    _BoostSide side,
+    double localDy,
+    double zoneHeight,
+  ) async {
     final controller = _videoController;
     if (controller == null) {
       return;
     }
 
-    _isBoosting = isBoosting;
-    await controller.setPlaybackSpeed(isBoosting ? 3.0 : _selectedSpeed);
+    _chromeTimer?.cancel();
+    _isBoosting = true;
+    _showChrome = false;
+    _rippleSide = side;
+    _rippleVerticalFactor = zoneHeight <= 0
+        ? 0.5
+        : (localDy / zoneHeight).clamp(0.18, 0.82);
+
+    await controller.setPlaybackSpeed(3.0);
 
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _handleBoostEnd() async {
+    final controller = _videoController;
+    if (controller == null) {
+      return;
+    }
+
+    _isBoosting = false;
+    await controller.setPlaybackSpeed(_selectedSpeed);
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    _scheduleChromeHide();
+  }
+
+  void _toggleChrome() {
+    if (_isBoosting) {
+      return;
+    }
+
+    setState(() {
+      _showChrome = !_showChrome;
+    });
+
+    if (_showChrome) {
+      _scheduleChromeHide();
+    } else {
+      _chromeTimer?.cancel();
     }
   }
 
@@ -163,269 +266,516 @@ class _PlayerPageState extends State<PlayerPage> {
     final title = path.basename(widget.videoPath);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF19161F),
-      body: SafeArea(
-        child: _isInitializing || controller == null
-            ? const Center(child: CircularProgressIndicator())
-            : AnimatedBuilder(
+      backgroundColor: Colors.black,
+      body: _isInitializing || controller == null
+          ? const Center(child: CircularProgressIndicator())
+          : GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleChrome,
+              child: AnimatedBuilder(
                 animation: controller,
                 builder: (context, _) {
                   final value = controller.value;
+                  final durationMs = value.duration.inMilliseconds;
+                  final positionMs = value.position.inMilliseconds.clamp(
+                    0,
+                    durationMs == 0 ? 1 : durationMs,
+                  );
                   final playbackRate = _isBoosting ? 3.0 : _selectedSpeed;
 
-                  return Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 12, 0),
-                        child: Row(
-                          children: [
-                            IconButton.filledTonal(
-                              onPressed: () => Navigator.of(context).pop(),
-                              icon: const Icon(Icons.arrow_back_rounded),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(color: AppPalette.white),
-                                  ),
-                                  Text(
-                                    'Long press left or right for 3x boost',
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: AppPalette.white.withValues(
-                                            alpha: 0.72,
-                                          ),
-                                        ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppPalette.berry.withValues(alpha: 0.5),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                '${playbackRate.toStringAsFixed(playbackRate == playbackRate.roundToDouble() ? 0 : 2)}x',
-                                style: const TextStyle(
-                                  color: AppPalette.white,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Expanded(
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: AspectRatio(
-                              aspectRatio: value.aspectRatio == 0
-                                  ? 16 / 9
-                                  : value.aspectRatio,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(30),
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    ColoredBox(
-                                      color: Colors.black,
-                                      child: VideoPlayer(controller),
-                                    ),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _BoostZone(
-                                            alignment: Alignment.centerLeft,
-                                            label: 'Hold 3x',
-                                            onLongPressStart: () =>
-                                                _setBoosting(true),
-                                            onLongPressEnd: () =>
-                                                _setBoosting(false),
-                                          ),
-                                        ),
-                                        Expanded(
-                                          child: _BoostZone(
-                                            alignment: Alignment.centerRight,
-                                            label: 'Hold 3x',
-                                            onLongPressStart: () =>
-                                                _setBoosting(true),
-                                            onLongPressEnd: () =>
-                                                _setBoosting(false),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Positioned(
-                                      left: 20,
-                                      right: 20,
-                                      bottom: 20,
-                                      child: AnimatedOpacity(
-                                        duration: const Duration(
-                                          milliseconds: 180,
-                                        ),
-                                        opacity: _isBoosting ? 1 : 0,
-                                        child: Center(
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 18,
-                                              vertical: 12,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: AppPalette.berry
-                                                  .withValues(alpha: 0.82),
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                            ),
-                                            child: const Text(
-                                              '3x boost active',
-                                              style: TextStyle(
-                                                color: AppPalette.white,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                  return ColoredBox(
+                    color: Colors.black,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Center(
+                          child: FittedBox(
+                            fit: BoxFit.contain,
+                            child: SizedBox(
+                              width: value.size.width <= 0
+                                  ? MediaQuery.of(context).size.width
+                                  : value.size.width,
+                              height: value.size.height <= 0
+                                  ? MediaQuery.of(context).size.width / (16 / 9)
+                                  : value.size.height,
+                              child: VideoPlayer(controller),
                             ),
                           ),
                         ),
-                      ),
-                      Container(
-                        margin: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: AppPalette.white,
-                          borderRadius: BorderRadius.circular(32),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            return Row(
                               children: [
-                                IconButton.filled(
-                                  onPressed: _togglePlayback,
-                                  icon: Icon(
-                                    value.isPlaying
-                                        ? Icons.pause_rounded
-                                        : Icons.play_arrow_rounded,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
                                 Expanded(
-                                  child: Text(
-                                    '${_formatDuration(value.position)} / '
-                                    '${_formatDuration(value.duration)}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(color: AppPalette.ink),
+                                  child: _BoostZone(
+                                    onLongPressStart: (details) {
+                                      _handleBoostStart(
+                                        _BoostSide.left,
+                                        details.localPosition.dy,
+                                        constraints.maxHeight,
+                                      );
+                                    },
+                                    onLongPressEnd: (_) => _handleBoostEnd(),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _BoostZone(
+                                    onLongPressStart: (details) {
+                                      _handleBoostStart(
+                                        _BoostSide.right,
+                                        details.localPosition.dy,
+                                        constraints.maxHeight,
+                                      );
+                                    },
+                                    onLongPressEnd: (_) => _handleBoostEnd(),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: _BoostRippleOverlay(
+                              isVisible: _isBoosting,
+                              verticalFactor: _rippleVerticalFactor,
+                              side: _rippleSide,
+                            ),
+                          ),
+                        ),
+                        AnimatedOpacity(
+                          duration: const Duration(milliseconds: 180),
+                          opacity: _showChrome ? 1 : 0,
+                          child: IgnorePointer(
+                            ignoring: !_showChrome,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                const _TopScrim(),
+                                const _BottomScrim(),
+                                Positioned(
+                                  top: MediaQuery.of(context).padding.top + 12,
+                                  left: 12,
+                                  right: 12,
+                                  child: Row(
+                                    children: [
+                                      _PlayerIconButton(
+                                        icon: Icons.arrow_back_rounded,
+                                        onPressed: () =>
+                                            Navigator.of(context).pop(),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium
+                                                  ?.copyWith(
+                                                    color: AppPalette.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              'Smooth playback with quick 3x edge boost',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                    color: AppPalette.white
+                                                        .withValues(
+                                                          alpha: 0.72,
+                                                        ),
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.12,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.12,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '${_formatSpeed(playbackRate)}x',
+                                          style: const TextStyle(
+                                            color: AppPalette.white,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Positioned(
+                                  left: 18,
+                                  right: 18,
+                                  bottom:
+                                      MediaQuery.of(context).padding.bottom +
+                                      18,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.42,
+                                      ),
+                                      borderRadius: BorderRadius.circular(28),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.08,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        18,
+                                        18,
+                                        18,
+                                        14,
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              _PlayerIconButton(
+                                                icon: value.isPlaying
+                                                    ? Icons.pause_rounded
+                                                    : Icons.play_arrow_rounded,
+                                                onPressed: _togglePlayback,
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Text(
+                                                  '${_formatDuration(value.position)} / '
+                                                  '${_formatDuration(value.duration)}',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium
+                                                      ?.copyWith(
+                                                        color: AppPalette.white,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          SliderTheme(
+                                            data: SliderTheme.of(context)
+                                                .copyWith(
+                                                  overlayShape:
+                                                      SliderComponentShape
+                                                          .noOverlay,
+                                                  thumbColor: AppPalette.white,
+                                                  activeTrackColor:
+                                                      AppPalette.white,
+                                                  inactiveTrackColor: Colors
+                                                      .white
+                                                      .withValues(alpha: 0.18),
+                                                  trackHeight: 3,
+                                                ),
+                                            child: Slider(
+                                              value: positionMs.toDouble(),
+                                              min: 0,
+                                              max: durationMs == 0
+                                                  ? 1
+                                                  : durationMs.toDouble(),
+                                              onChanged: (nextValue) {
+                                                _showChromeNow();
+                                                controller.seekTo(
+                                                  Duration(
+                                                    milliseconds: nextValue
+                                                        .round(),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          SingleChildScrollView(
+                                            scrollDirection: Axis.horizontal,
+                                            child: Row(
+                                              children: [
+                                                for (final speed
+                                                    in _speedPresets)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          right: 10,
+                                                        ),
+                                                    child: ChoiceChip(
+                                                      label: Text('${speed}x'),
+                                                      selected:
+                                                          speed ==
+                                                          _selectedSpeed,
+                                                      onSelected: (_) =>
+                                                          _setSelectedSpeed(
+                                                            speed,
+                                                          ),
+                                                      selectedColor:
+                                                          AppPalette.white,
+                                                      backgroundColor: Colors
+                                                          .white
+                                                          .withValues(
+                                                            alpha: 0.1,
+                                                          ),
+                                                      labelStyle: TextStyle(
+                                                        color:
+                                                            speed ==
+                                                                _selectedSpeed
+                                                            ? AppPalette.ink
+                                                            : AppPalette.white,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 10),
-                            Slider(
-                              value: value.duration.inMilliseconds == 0
-                                  ? 0
-                                  : value.position.inMilliseconds
-                                        .clamp(0, value.duration.inMilliseconds)
-                                        .toDouble(),
-                              min: 0,
-                              max: value.duration.inMilliseconds == 0
-                                  ? 1
-                                  : value.duration.inMilliseconds.toDouble(),
-                              onChanged: (nextValue) {
-                                controller.seekTo(
-                                  Duration(milliseconds: nextValue.round()),
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              'Playback speed',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 10,
-                              children: [
-                                for (final speed in _speedPresets)
-                                  ChoiceChip(
-                                    label: Text('${speed}x'),
-                                    selected: speed == _selectedSpeed,
-                                    onSelected: (_) => _setSelectedSpeed(speed),
-                                  ),
-                              ],
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   );
                 },
               ),
-      ),
+            ),
     );
   }
 }
 
 class _BoostZone extends StatelessWidget {
   const _BoostZone({
-    required this.alignment,
-    required this.label,
     required this.onLongPressStart,
     required this.onLongPressEnd,
   });
 
-  final Alignment alignment;
-  final String label;
-  final VoidCallback onLongPressStart;
-  final VoidCallback onLongPressEnd;
+  final GestureLongPressStartCallback onLongPressStart;
+  final GestureLongPressEndCallback onLongPressEnd;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onLongPressStart: (_) => onLongPressStart(),
-      onLongPressEnd: (_) => onLongPressEnd(),
-      onLongPressCancel: onLongPressEnd,
-      child: Align(
-        alignment: alignment,
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 18),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.28),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: AppPalette.white,
-              fontWeight: FontWeight.w700,
+      onLongPressStart: onLongPressStart,
+      onLongPressEnd: onLongPressEnd,
+      onLongPressCancel: () => onLongPressEnd(
+        LongPressEndDetails(
+          globalPosition: Offset.zero,
+          localPosition: Offset.zero,
+        ),
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _BoostRippleOverlay extends StatelessWidget {
+  const _BoostRippleOverlay({
+    required this.isVisible,
+    required this.verticalFactor,
+    required this.side,
+  });
+
+  final bool isVisible;
+  final double verticalFactor;
+  final _BoostSide side;
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontalPadding = side == _BoostSide.left ? 54.0 : null;
+    final rightPadding = side == _BoostSide.right ? 54.0 : null;
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 140),
+      opacity: isVisible ? 1 : 0,
+      child: Stack(
+        children: [
+          Positioned(
+            left: horizontalPadding,
+            right: rightPadding,
+            top: MediaQuery.of(context).size.height * verticalFactor - 34,
+            child: Align(
+              alignment: side == _BoostSide.left
+                  ? Alignment.centerLeft
+                  : Alignment.centerRight,
+              child: _RipplePulse(isVisible: isVisible),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RipplePulse extends StatefulWidget {
+  const _RipplePulse({required this.isVisible});
+
+  final bool isVisible;
+
+  @override
+  State<_RipplePulse> createState() => _RipplePulseState();
+}
+
+class _RipplePulseState extends State<_RipplePulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    if (widget.isVisible) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _RipplePulse oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isVisible && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!widget.isVisible && _controller.isAnimating) {
+      _controller.stop();
+      _controller.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final wave = Curves.easeOut.transform(_controller.value);
+        return SizedBox(
+          width: 92,
+          height: 92,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              for (final multiplier in [1.0, 0.72, 0.44])
+                Container(
+                  width: 30 + (wave * 52 * multiplier),
+                  height: 30 + (wave * 52 * multiplier),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(
+                      alpha: (0.1 * multiplier) * (1 - wave),
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(
+                        alpha: (0.18 * multiplier) * (1 - wave),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PlayerIconButton extends StatelessWidget {
+  const _PlayerIconButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.12),
+      shape: const CircleBorder(),
+      child: IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, color: AppPalette.white),
+      ),
+    );
+  }
+}
+
+class _TopScrim extends StatelessWidget {
+  const _TopScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Align(
+      alignment: Alignment.topCenter,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xAA000000), Color(0x00000000)],
+            ),
+          ),
+          child: SizedBox(height: 160, width: double.infinity),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomScrim extends StatelessWidget {
+  const _BottomScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Align(
+      alignment: Alignment.bottomCenter,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x00000000), Color(0xCC000000)],
+            ),
+          ),
+          child: SizedBox(height: 240, width: double.infinity),
         ),
       ),
     );
@@ -445,4 +795,8 @@ String _formatDuration(Duration duration) {
 
   return '${minutes.toString().padLeft(2, '0')}:'
       '${seconds.toString().padLeft(2, '0')}';
+}
+
+String _formatSpeed(double speed) {
+  return speed.toStringAsFixed(speed == speed.roundToDouble() ? 0 : 2);
 }
