@@ -1,8 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as path;
 
 import '../../../app/app_scope.dart';
 import '../../../app/theme/app_palette.dart';
+import '../../../data/models/library_video.dart';
 import '../../../data/models/watch_record.dart';
 import '../../player/presentation/player_page.dart';
 
@@ -21,18 +23,38 @@ class _LibraryPageState extends State<LibraryPage> {
       return;
     }
 
+    final controller = SnozPlayerScope.of(context);
+
     setState(() {
       _isPicking = true;
     });
 
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.video);
-      final videoPath = result?.files.single.path;
-      if (!mounted || videoPath == null || videoPath.isEmpty) {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+        allowMultiple: true,
+      );
+      final videoPaths =
+          result?.files
+              .map((file) => file.path)
+              .whereType<String>()
+              .where((filePath) => filePath.isNotEmpty)
+              .toList() ??
+          const [];
+
+      if (!mounted || videoPaths.isEmpty) {
         return;
       }
 
-      await Navigator.of(context).push(PlayerPage.route(videoPath: videoPath));
+      await controller.importVideos(videoPaths);
+
+      if (!mounted) {
+        return;
+      }
+
+      await Navigator.of(
+        context,
+      ).push(PlayerPage.route(videoPath: videoPaths.first));
     } finally {
       if (mounted) {
         setState(() {
@@ -46,6 +68,7 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget build(BuildContext context) {
     final controller = SnozPlayerScope.of(context);
     final records = controller.records;
+    final libraryVideos = controller.libraryVideos;
 
     return SafeArea(
       child: CustomScrollView(
@@ -70,8 +93,8 @@ class _LibraryPageState extends State<LibraryPage> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'Import a video from your device, play it with custom speed, '
-                        'and resume later right where you stopped.',
+                        'Import one or many videos from your device, then keep a '
+                        'clean library with separate watch progress.',
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
                       const SizedBox(height: 18),
@@ -79,12 +102,45 @@ class _LibraryPageState extends State<LibraryPage> {
                         onPressed: _isPicking ? null : _pickVideo,
                         icon: const Icon(Icons.add_rounded),
                         label: Text(
-                          _isPicking ? 'Opening picker...' : 'Import video',
+                          _isPicking
+                              ? 'Opening picker...'
+                              : 'Batch import videos',
                         ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 24),
+                Text(
+                  'Imported videos',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+                if (!controller.isReady)
+                  const Center(child: CircularProgressIndicator())
+                else if (libraryVideos.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      color: AppPalette.white.withValues(alpha: 0.88),
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Text(
+                      'Batch import your local collection and it will stay here, '
+                      'even before you start watching.',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  )
+                else
+                  ...libraryVideos.map((video) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _LibraryVideoTile(
+                        video: video,
+                        record: controller.recordForPath(video.videoPath),
+                      ),
+                    );
+                  }),
                 const SizedBox(height: 24),
                 Text(
                   'Recently watched',
@@ -116,6 +172,111 @@ class _LibraryPageState extends State<LibraryPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LibraryVideoTile extends StatelessWidget {
+  const _LibraryVideoTile({required this.video, required this.record});
+
+  final LibraryVideo video;
+  final WatchRecord? record;
+
+  @override
+  Widget build(BuildContext context) {
+    final progressRecord = record;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28),
+        onTap: () {
+          Navigator.of(
+            context,
+          ).push(PlayerPage.route(videoPath: video.videoPath));
+        },
+        child: Ink(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppPalette.white.withValues(alpha: 0.88),
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 62,
+                height: 62,
+                decoration: BoxDecoration(
+                  color: AppPalette.sky,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: const Icon(
+                  Icons.play_circle_fill_rounded,
+                  size: 34,
+                  color: AppPalette.berry,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      video.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleMedium?.copyWith(color: AppPalette.ink),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      progressRecord == null
+                          ? 'Ready to watch'
+                          : 'Resume from ${_formatClock(progressRecord.positionMs)}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        minHeight: 8,
+                        value: record?.progress ?? 0,
+                        backgroundColor: AppPalette.blush,
+                        color: AppPalette.coral,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 14),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    progressRecord == null
+                        ? 'New'
+                        : '${(progressRecord.progress * 100).round()}%',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleMedium?.copyWith(color: AppPalette.berry),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    path
+                            .extension(video.videoPath)
+                            .replaceFirst('.', '')
+                            .isEmpty
+                        ? 'video'
+                        : path.extension(video.videoPath).replaceFirst('.', ''),
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

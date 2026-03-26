@@ -81,6 +81,7 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Future<void> _initializeVideo() async {
+    await _appController.ensureVideoImported(widget.videoPath);
     final record = _appController.recordForPath(widget.videoPath);
     final controller = VideoPlayerController.file(File(widget.videoPath));
 

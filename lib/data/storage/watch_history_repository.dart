@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/library_video.dart';
 import '../models/watch_record.dart';
 
 class WatchHistoryRepository {
@@ -9,6 +10,7 @@ class WatchHistoryRepository {
     : _prefsFactory = prefsFactory ?? SharedPreferences.getInstance;
 
   static const _recordsKey = 'watch_history_records_v1';
+  static const _libraryKey = 'library_videos_v1';
 
   final Future<SharedPreferences> Function() _prefsFactory;
 
@@ -42,5 +44,37 @@ class WatchHistoryRepository {
     final prefs = await _prefsFactory();
     final payload = records.map((record) => record.toJson()).toList();
     await prefs.setString(_recordsKey, jsonEncode(payload));
+  }
+
+  Future<List<LibraryVideo>> readLibraryVideos() async {
+    final prefs = await _prefsFactory();
+    final raw = prefs.getString(_libraryKey);
+    if (raw == null || raw.isEmpty) {
+      return const [];
+    }
+
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) {
+      return const [];
+    }
+
+    final videos = decoded
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .map(LibraryVideo.fromJson)
+        .where((video) => video.videoPath.isNotEmpty)
+        .toList();
+
+    videos.sort((left, right) {
+      return right.importedAt.compareTo(left.importedAt);
+    });
+
+    return videos;
+  }
+
+  Future<void> writeLibraryVideos(List<LibraryVideo> videos) async {
+    final prefs = await _prefsFactory();
+    final payload = videos.map((video) => video.toJson()).toList();
+    await prefs.setString(_libraryKey, jsonEncode(payload));
   }
 }
