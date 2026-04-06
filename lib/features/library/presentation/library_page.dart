@@ -97,6 +97,7 @@ class _LibraryPageState extends State<LibraryPage> {
         return;
       }
 
+      await controller.registerFolder(folderPath);
       final importedVideoPaths = await controller.importFolder(folderPath);
       if (!mounted) {
         return;
@@ -106,11 +107,10 @@ class _LibraryPageState extends State<LibraryPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Could not read videos in this folder. Try a normal media folder instead of a protected system directory.',
+              'Folder saved to Library. If no videos appear, try a normal media folder instead of a protected system directory.',
             ),
           ),
         );
-        return;
       }
 
       await Navigator.of(

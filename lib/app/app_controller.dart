@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 
 import '../data/models/library_folder.dart';
+import '../data/models/library_folder_entry.dart';
 import '../data/models/library_video.dart';
 import '../data/models/watch_record.dart';
 import '../data/storage/watch_history_repository.dart';
@@ -31,36 +32,51 @@ class SnozPlayerController extends ChangeNotifier {
   bool _isReady = false;
   List<WatchRecord> _records = const [];
   List<LibraryVideo> _libraryVideos = const [];
+  List<LibraryFolderEntry> _libraryFolderEntries = const [];
 
   bool get isReady => _isReady;
   List<WatchRecord> get records => List.unmodifiable(_records);
   List<LibraryVideo> get libraryVideos => List.unmodifiable(_libraryVideos);
   List<LibraryFolder> get libraryFolders {
     final grouped = <String, List<LibraryVideo>>{};
+    final entries = <String, LibraryFolderEntry>{
+      for (final entry in _libraryFolderEntries) entry.folderPath: entry,
+    };
 
     for (final video in _libraryVideos) {
       grouped.putIfAbsent(video.folderPath, () => []).add(video);
     }
 
-    final folders = grouped.entries.map((entry) {
-      final videos = [...entry.value]..sort(_compareLibraryVideos);
-      final folderName = videos.isEmpty
-          ? path.basename(entry.key)
-          : videos.first.folderName;
+    final allFolderPaths = {...entries.keys, ...grouped.keys};
+
+    final folders = allFolderPaths.map((folderPath) {
+      final videos = [...(grouped[folderPath] ?? const <LibraryVideo>[])]
+        ..sort(_compareLibraryVideos);
+      final folderEntry = entries[folderPath];
+      final folderName = folderEntry?.folderName.isNotEmpty == true
+          ? folderEntry!.folderName
+          : videos.isNotEmpty
+          ? videos.first.folderName
+          : path.basename(folderPath);
       return LibraryFolder(
-        folderPath: entry.key,
+        folderPath: folderPath,
         folderName: folderName,
         videos: videos,
+        importedAt:
+            folderEntry?.importedAt ??
+            (videos.isNotEmpty
+                ? videos.first.importedAt
+                : DateTime.fromMillisecondsSinceEpoch(0)),
       );
     }).toList();
 
     folders.sort((left, right) {
-      final byName = _compareNaturally(left.folderName, right.folderName);
-      if (byName != 0) {
-        return byName;
+      final byImportTime = right.importedAt.compareTo(left.importedAt);
+      if (byImportTime != 0) {
+        return byImportTime;
       }
 
-      return _compareNaturally(left.folderPath, right.folderPath);
+      return _compareNaturally(left.folderName, right.folderName);
     });
 
     return folders;
@@ -83,6 +99,7 @@ class SnozPlayerController extends ChangeNotifier {
 
     _records = await _repository.readRecords();
     _libraryVideos = await _repository.readLibraryVideos();
+    _libraryFolderEntries = await _repository.readLibraryFolders();
     _libraryVideos.sort(_compareLibraryVideos);
     _isReady = true;
     notifyListeners();
@@ -91,6 +108,7 @@ class SnozPlayerController extends ChangeNotifier {
   Future<void> refresh() async {
     _records = await _repository.readRecords();
     _libraryVideos = await _repository.readLibraryVideos();
+    _libraryFolderEntries = await _repository.readLibraryFolders();
     _libraryVideos.sort(_compareLibraryVideos);
     _isReady = true;
     notifyListeners();
@@ -152,6 +170,49 @@ class SnozPlayerController extends ChangeNotifier {
   String folderPathForPath(String videoPath) {
     return libraryVideoForPath(videoPath)?.folderPath ??
         path.dirname(videoPath);
+  }
+
+  Future<void> registerFolder(
+    String folderPath, {
+    String? folderNameOverride,
+  }) async {
+    final normalizedPath = folderPath.trim();
+    if (normalizedPath.isEmpty) {
+      return;
+    }
+
+    final effectiveFolderName = folderNameOverride?.trim().isNotEmpty == true
+        ? folderNameOverride!.trim()
+        : path.basename(normalizedPath);
+    final nextEntries = [..._libraryFolderEntries];
+    final existingIndex = nextEntries.indexWhere(
+      (item) => item.folderPath == normalizedPath,
+    );
+
+    if (existingIndex == -1) {
+      nextEntries.add(
+        LibraryFolderEntry(
+          folderPath: normalizedPath,
+          folderName: effectiveFolderName,
+          importedAt: DateTime.now(),
+        ),
+      );
+    } else {
+      nextEntries[existingIndex] = LibraryFolderEntry(
+        folderPath: normalizedPath,
+        folderName: effectiveFolderName,
+        importedAt: DateTime.now(),
+      );
+    }
+
+    nextEntries.sort((left, right) {
+      return right.importedAt.compareTo(left.importedAt);
+    });
+
+    _libraryFolderEntries = nextEntries;
+    _isReady = true;
+    notifyListeners();
+    await _repository.writeLibraryFolders(_libraryFolderEntries);
   }
 
   Future<void> importVideos(
@@ -223,6 +284,8 @@ class SnozPlayerController extends ChangeNotifier {
     if (!await directory.exists()) {
       return const [];
     }
+
+    await registerFolder(folderPath);
 
     final videoPaths = <String>[];
 
