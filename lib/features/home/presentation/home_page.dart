@@ -262,9 +262,15 @@ class _RecentRecordCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(28),
         onTap: () {
-          Navigator.of(
-            context,
-          ).push(PlayerPage.route(videoPath: record.videoPath));
+          final controller = SnozPlayerScope.of(context);
+          Navigator.of(context).push(
+            PlayerPage.route(
+              videoPath: record.videoPath,
+              playlist: controller.playlistForPath(record.videoPath),
+              initialIndex: controller.playlistIndexForPath(record.videoPath),
+              playlistTitle: controller.folderNameForPath(record.videoPath),
+            ),
+          );
         },
         child: Ink(
           padding: const EdgeInsets.all(20),

@@ -20,13 +20,32 @@ enum _BoostSide { left, right }
 enum _AdjustmentType { brightness, volume }
 
 class PlayerPage extends StatefulWidget {
-  const PlayerPage({required this.videoPath, super.key});
+  const PlayerPage({
+    required this.videoPath,
+    this.playlist = const [],
+    this.initialIndex,
+    this.playlistTitle,
+    super.key,
+  });
 
   final String videoPath;
+  final List<String> playlist;
+  final int? initialIndex;
+  final String? playlistTitle;
 
-  static Route<void> route({required String videoPath}) {
+  static Route<void> route({
+    required String videoPath,
+    List<String> playlist = const [],
+    int? initialIndex,
+    String? playlistTitle,
+  }) {
     return MaterialPageRoute<void>(
-      builder: (_) => PlayerPage(videoPath: videoPath),
+      builder: (_) => PlayerPage(
+        videoPath: videoPath,
+        playlist: playlist,
+        initialIndex: initialIndex,
+        playlistTitle: playlistTitle,
+      ),
     );
   }
 
@@ -58,12 +77,16 @@ class _PlayerPageState extends State<PlayerPage> {
   double _gestureStartBrightness = 0.5;
   double _gestureStartVolume = 0.5;
   double _gestureStartDy = 0;
+  int _currentIndex = 0;
   Duration _seekPreviewPosition = Duration.zero;
   Duration _seekDelta = Duration.zero;
   Duration _seekStartPosition = Duration.zero;
   _BoostSide _rippleSide = _BoostSide.right;
   _AdjustmentType _adjustmentType = _AdjustmentType.brightness;
   late final SnozPlayerController _appController;
+  late List<String> _playlistPaths;
+  late String _currentVideoPath;
+  late String _playlistTitle;
 
   @override
   void didChangeDependencies() {
@@ -74,6 +97,12 @@ class _PlayerPageState extends State<PlayerPage> {
 
     _didKickoff = true;
     _appController = SnozPlayerScope.of(context);
+    _playlistPaths = _buildPlaylist();
+    _currentIndex = _resolveCurrentIndex();
+    _currentVideoPath = _playlistPaths[_currentIndex];
+    _playlistTitle = widget.playlistTitle?.trim().isNotEmpty == true
+        ? widget.playlistTitle!.trim()
+        : path.basename(path.dirname(_currentVideoPath));
     unawaited(_enterImmersiveMode());
     unawaited(_primeSystemLevels());
     _initializeVideo();
@@ -125,14 +154,61 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Future<void> _initializeVideo() async {
-    await _appController.ensureVideoImported(widget.videoPath);
-    final record = _appController.recordForPath(widget.videoPath);
-    final controller = VideoPlayerController.file(File(widget.videoPath));
+    await _loadVideo(_currentVideoPath);
+  }
+
+  List<String> _buildPlaylist() {
+    final playlist = <String>[];
+    for (final item in widget.playlist) {
+      final normalized = item.trim();
+      if (normalized.isEmpty || playlist.contains(normalized)) {
+        continue;
+      }
+      playlist.add(normalized);
+    }
+
+    if (!playlist.contains(widget.videoPath)) {
+      playlist.insert(0, widget.videoPath);
+    }
+
+    return playlist.isEmpty ? [widget.videoPath] : playlist;
+  }
+
+  int _resolveCurrentIndex() {
+    final fallbackIndex = _playlistPaths.indexOf(widget.videoPath);
+    final preferredIndex = widget.initialIndex ?? fallbackIndex;
+    if (preferredIndex < 0 || preferredIndex >= _playlistPaths.length) {
+      return fallbackIndex == -1 ? 0 : fallbackIndex;
+    }
+
+    return preferredIndex;
+  }
+
+  Future<void> _loadVideo(String videoPath) async {
+    final previousController = _videoController;
+    previousController?.removeListener(_handleVideoTick);
+    await previousController?.dispose();
+
+    _saveTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _isInitializing = true;
+        _videoController = null;
+        _showChrome = true;
+        _showSeekIndicator = false;
+        _showAdjustmentIndicator = false;
+      });
+    }
+
+    await _appController.ensureVideoImported(videoPath);
+    final record = _appController.recordForPath(videoPath);
+    final controller = VideoPlayerController.file(File(videoPath));
 
     await controller.initialize();
     controller.addListener(_handleVideoTick);
 
-    _selectedSpeed = record?.lastSpeed ?? 1.0;
+    _selectedSpeed = record?.lastSpeed ?? _selectedSpeed;
     await controller.setPlaybackSpeed(_selectedSpeed);
 
     if (record != null && record.positionMs > 0) {
@@ -157,6 +233,25 @@ class _PlayerPageState extends State<PlayerPage> {
         _isInitializing = false;
       });
     }
+  }
+
+  Future<void> _switchEpisode(int index) async {
+    if (index < 0 || index >= _playlistPaths.length || index == _currentIndex) {
+      return;
+    }
+
+    await _persistProgress();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _currentIndex = index;
+      _currentVideoPath = _playlistPaths[index];
+    });
+
+    await _loadVideo(_currentVideoPath);
   }
 
   void _handleVideoTick() {
@@ -235,8 +330,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final safePosition = reachedEnd ? Duration.zero : rawPosition;
 
     final record = WatchRecord(
-      videoPath: widget.videoPath,
-      title: path.basename(widget.videoPath),
+      videoPath: _currentVideoPath,
+      title: path.basename(_currentVideoPath),
       positionMs: safePosition.inMilliseconds,
       durationMs: duration.inMilliseconds,
       lastSpeed: _selectedSpeed,
@@ -491,10 +586,14 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  String _episodeLabel(String videoPath) {
+    return path.basenameWithoutExtension(videoPath);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _videoController;
-    final title = path.basename(widget.videoPath);
+    final title = path.basename(_currentVideoPath);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -691,7 +790,9 @@ class _PlayerPageState extends State<PlayerPage> {
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
-                                            'Double tap to play or pause',
+                                            _playlistPaths.length > 1
+                                                ? '$_playlistTitle · ${_currentIndex + 1}/${_playlistPaths.length}'
+                                                : 'Double tap to play or pause',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: Theme.of(context)
@@ -735,6 +836,90 @@ class _PlayerPageState extends State<PlayerPage> {
                                   ],
                                 ),
                               ),
+                              if (_playlistPaths.length > 1)
+                                Positioned(
+                                  left: 18,
+                                  right: 18,
+                                  bottom:
+                                      MediaQuery.of(context).padding.bottom +
+                                      116,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.32,
+                                      ),
+                                      borderRadius: BorderRadius.circular(24),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.08,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 6,
+                                              bottom: 8,
+                                            ),
+                                            child: Text(
+                                              'Episodes',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelLarge
+                                                  ?.copyWith(
+                                                    color: AppPalette.white
+                                                        .withValues(
+                                                          alpha: 0.78,
+                                                        ),
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                            ),
+                                          ),
+                                          SingleChildScrollView(
+                                            scrollDirection: Axis.horizontal,
+                                            physics:
+                                                const BouncingScrollPhysics(),
+                                            child: Row(
+                                              children: [
+                                                for (
+                                                  var index = 0;
+                                                  index < _playlistPaths.length;
+                                                  index++
+                                                )
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          right: 8,
+                                                        ),
+                                                    child: _EpisodeChip(
+                                                      label: _episodeLabel(
+                                                        _playlistPaths[index],
+                                                      ),
+                                                      index: index,
+                                                      isSelected:
+                                                          index ==
+                                                          _currentIndex,
+                                                      onTap: () =>
+                                                          _switchEpisode(index),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               Positioned(
                                 left: 18,
                                 right: 18,
@@ -960,6 +1145,73 @@ class _BoostZone extends StatelessWidget {
       onHorizontalDragUpdate: onHorizontalDragUpdate,
       onHorizontalDragEnd: onHorizontalDragEnd,
       child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _EpisodeChip extends StatelessWidget {
+  const _EpisodeChip({
+    required this.label,
+    required this.index,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int index;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: isSelected
+          ? AppPalette.white.withValues(alpha: 0.22)
+          : Colors.white.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppPalette.peach.withValues(alpha: 0.95)
+                      : Colors.white.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '${index + 1}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: isSelected ? AppPalette.ink : AppPalette.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 140),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppPalette.white,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
