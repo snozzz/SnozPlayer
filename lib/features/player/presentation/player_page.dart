@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +36,8 @@ class PlayerPage extends StatefulWidget {
 
 class _PlayerPageState extends State<PlayerPage> {
   static const _speedPresets = [0.5, 1.0, 1.25, 1.5, 2.0];
+  static const double _horizontalSeekDeadZone = 14;
+  static const int _seekIndicatorFadeOutMs = 520;
 
   VideoPlayerController? _videoController;
   Timer? _saveTimer;
@@ -394,7 +398,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     setState(() {
-      _showSeekIndicator = true;
+      _showSeekIndicator = false;
     });
   }
 
@@ -409,13 +413,25 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     final availableWidth = zoneWidth <= 0 ? 1.0 : zoneWidth;
-    final deltaFactor =
-        (details.localPosition.dx - _gestureStartDx) / availableWidth;
+    final rawDeltaPx = details.localPosition.dx - _gestureStartDx;
+    final effectiveDeltaPx = rawDeltaPx.abs() <= _horizontalSeekDeadZone
+        ? 0.0
+        : rawDeltaPx.sign * (rawDeltaPx.abs() - _horizontalSeekDeadZone);
     final durationMs = duration.inMilliseconds;
     final maxSeekMs = durationMs <= 0
-        ? 15000
-        : (durationMs * 0.25).round().clamp(30000, 300000);
-    final deltaMs = (deltaFactor * maxSeekMs).round();
+        ? 30000
+        : (durationMs * 0.08).round().clamp(45000, 360000);
+    final dragProgress = (effectiveDeltaPx.abs() / (availableWidth * 0.72))
+        .clamp(0.0, 1.0);
+    final curvedProgress = math.pow(dragProgress, 1.18).toDouble();
+    final seekStepMs = durationMs >= const Duration(minutes: 40).inMilliseconds
+        ? 5000
+        : 2000;
+    final deltaMs = effectiveDeltaPx == 0
+        ? 0
+        : ((effectiveDeltaPx.sign * curvedProgress * maxSeekMs) / seekStepMs)
+                  .round() *
+              seekStepMs;
     final targetMs = (_seekStartPosition.inMilliseconds + deltaMs).clamp(
       0,
       durationMs <= 0 ? 0 : durationMs,
@@ -426,7 +442,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     setState(() {
-      _showSeekIndicator = true;
+      _showSeekIndicator = deltaMs != 0;
       _seekDelta = Duration(milliseconds: deltaMs);
       _seekPreviewPosition = Duration(milliseconds: targetMs);
     });
@@ -439,19 +455,22 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     final target = _seekPreviewPosition;
-    if (target != controller.value.position) {
+    if (_showSeekIndicator && target != controller.value.position) {
       await controller.seekTo(target);
     }
 
     _seekIndicatorTimer?.cancel();
-    _seekIndicatorTimer = Timer(const Duration(milliseconds: 700), () {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _showSeekIndicator = false;
-      });
-    });
+    _seekIndicatorTimer = Timer(
+      const Duration(milliseconds: _seekIndicatorFadeOutMs),
+      () {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _showSeekIndicator = false;
+        });
+      },
+    );
 
     _scheduleChromeHide();
   }
@@ -959,45 +978,97 @@ class _SeekIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isForward = delta >= Duration.zero;
-    final icon = isForward
-        ? Icons.fast_forward_rounded
-        : Icons.fast_rewind_rounded;
-    final deltaLabel = delta == Duration.zero
-        ? 'Release to seek'
-        : '${isForward ? '+' : '-'}${_formatDelta(delta)}';
+    final deltaLabel = '${isForward ? '+' : '-'}${_formatDelta(delta)}';
+    final arrowIcon = isForward
+        ? Icons.chevron_right_rounded
+        : Icons.chevron_left_rounded;
+    final accentColor = isForward ? AppPalette.peach : AppPalette.sky;
 
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 180),
       opacity: isVisible ? 1 : 0,
-      child: Container(
-        width: 168,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: AppPalette.white),
-            const SizedBox(height: 8),
-            Text(
-              deltaLabel,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppPalette.white,
-                fontWeight: FontWeight.w700,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        scale: isVisible ? 1 : 0.96,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              width: 220,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.56),
+                    Colors.black.withValues(alpha: 0.38),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var index = 0; index < 3; index++)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 1),
+                          child: Icon(
+                            arrowIcon,
+                            size: 22,
+                            color: accentColor.withValues(
+                              alpha: 0.45 + (index * 0.2),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    deltaLabel,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: AppPalette.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatDuration(targetPosition),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: AppPalette.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.white.withValues(alpha: 0.16),
+                          accentColor.withValues(alpha: 0.92),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Slide horizontally to seek',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: AppPalette.white.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              _formatDuration(targetPosition),
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: AppPalette.white,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
