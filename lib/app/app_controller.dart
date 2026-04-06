@@ -149,7 +149,11 @@ class SnozPlayerController extends ChangeNotifier {
     return folder?.folderName ?? path.basename(folderPath);
   }
 
-  Future<void> importVideos(List<String> videoPaths) async {
+  Future<void> importVideos(
+    List<String> videoPaths, {
+    String? folderPathOverride,
+    String? folderNameOverride,
+  }) async {
     final nextLibrary = [..._libraryVideos];
     var changed = false;
 
@@ -159,10 +163,29 @@ class SnozPlayerController extends ChangeNotifier {
         continue;
       }
 
-      final exists = nextLibrary.any(
+      final effectiveFolderPath = folderPathOverride?.trim().isNotEmpty == true
+          ? folderPathOverride!.trim()
+          : path.dirname(normalizedPath);
+      final effectiveFolderName = folderNameOverride?.trim().isNotEmpty == true
+          ? folderNameOverride!.trim()
+          : path.basename(effectiveFolderPath);
+
+      final existingIndex = nextLibrary.indexWhere(
         (item) => item.videoPath == normalizedPath,
       );
-      if (exists) {
+      if (existingIndex != -1) {
+        final existingItem = nextLibrary[existingIndex];
+        if (existingItem.folderPath != effectiveFolderPath ||
+            existingItem.folderName != effectiveFolderName) {
+          nextLibrary[existingIndex] = LibraryVideo(
+            videoPath: existingItem.videoPath,
+            title: existingItem.title,
+            importedAt: existingItem.importedAt,
+            folderPath: effectiveFolderPath,
+            folderName: effectiveFolderName,
+          );
+          changed = true;
+        }
         continue;
       }
 
@@ -171,8 +194,8 @@ class SnozPlayerController extends ChangeNotifier {
           videoPath: normalizedPath,
           title: path.basename(normalizedPath),
           importedAt: DateTime.now(),
-          folderPath: path.dirname(normalizedPath),
-          folderName: path.basename(path.dirname(normalizedPath)),
+          folderPath: effectiveFolderPath,
+          folderName: effectiveFolderName,
         ),
       );
       changed = true;
@@ -196,22 +219,35 @@ class SnozPlayerController extends ChangeNotifier {
       return const [];
     }
 
-    final videoPaths =
-        directory
-            .listSync(followLinks: false)
-            .whereType<File>()
-            .map((file) => file.path)
-            .where(_isSupportedVideoPath)
-            .toList()
-          ..sort((left, right) {
-            return _compareNaturally(path.basename(left), path.basename(right));
-          });
+    final videoPaths = <String>[];
+
+    await for (final entity in directory.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      if (entity is! File) {
+        continue;
+      }
+
+      final filePath = entity.path;
+      if (_isSupportedVideoPath(filePath)) {
+        videoPaths.add(filePath);
+      }
+    }
+
+    videoPaths.sort((left, right) {
+      return _compareNaturally(path.basename(left), path.basename(right));
+    });
 
     if (videoPaths.isEmpty) {
       return const [];
     }
 
-    await importVideos(videoPaths);
+    await importVideos(
+      videoPaths,
+      folderPathOverride: folderPath,
+      folderNameOverride: path.basename(folderPath),
+    );
     return videoPaths;
   }
 

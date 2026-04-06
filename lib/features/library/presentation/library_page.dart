@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../../app/app_scope.dart';
 import '../../../app/theme/app_palette.dart';
@@ -78,6 +81,10 @@ class _LibraryPageState extends State<LibraryPage> {
     }
 
     final controller = SnozPlayerScope.of(context);
+    final permissionGranted = await _ensureFolderImportPermission();
+    if (!mounted || !permissionGranted) {
+      return;
+    }
 
     setState(() {
       _isPicking = true;
@@ -97,7 +104,9 @@ class _LibraryPageState extends State<LibraryPage> {
       if (importedVideoPaths.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No supported video files in this folder.'),
+            content: Text(
+              'Could not read videos in this folder. Try a normal media folder instead of a protected system directory.',
+            ),
           ),
         );
         return;
@@ -113,6 +122,32 @@ class _LibraryPageState extends State<LibraryPage> {
         });
       }
     }
+  }
+
+  Future<bool> _ensureFolderImportPermission() async {
+    if (!Platform.isAndroid) {
+      return true;
+    }
+
+    final statuses = await [Permission.videos, Permission.storage].request();
+    for (final status in statuses.values) {
+      if (status.isGranted || status.isLimited) {
+        return true;
+      }
+    }
+
+    if (!mounted) {
+      return false;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Please allow video/storage access before importing a folder.',
+        ),
+      ),
+    );
+    return false;
   }
 
   @override
