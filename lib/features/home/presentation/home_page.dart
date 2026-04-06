@@ -269,6 +269,9 @@ class _RecentRecordCard extends StatelessWidget {
               playlist: controller.playlistForPath(record.videoPath),
               initialIndex: controller.playlistIndexForPath(record.videoPath),
               playlistTitle: controller.folderNameForPath(record.videoPath),
+              playlistFolderPath: controller.folderPathForPath(
+                record.videoPath,
+              ),
             ),
           );
         },

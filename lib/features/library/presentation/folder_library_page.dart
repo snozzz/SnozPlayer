@@ -63,6 +63,7 @@ class FolderLibraryPage extends StatelessWidget {
                           playlist: playlist,
                           initialIndex: index,
                           playlistTitle: title,
+                          playlistFolderPath: folderPath,
                         ),
                       );
                     },

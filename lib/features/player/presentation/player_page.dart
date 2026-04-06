@@ -25,6 +25,7 @@ class PlayerPage extends StatefulWidget {
     this.playlist = const [],
     this.initialIndex,
     this.playlistTitle,
+    this.playlistFolderPath,
     super.key,
   });
 
@@ -32,12 +33,14 @@ class PlayerPage extends StatefulWidget {
   final List<String> playlist;
   final int? initialIndex;
   final String? playlistTitle;
+  final String? playlistFolderPath;
 
   static Route<void> route({
     required String videoPath,
     List<String> playlist = const [],
     int? initialIndex,
     String? playlistTitle,
+    String? playlistFolderPath,
   }) {
     return MaterialPageRoute<void>(
       builder: (_) => PlayerPage(
@@ -45,6 +48,7 @@ class PlayerPage extends StatefulWidget {
         playlist: playlist,
         initialIndex: initialIndex,
         playlistTitle: playlistTitle,
+        playlistFolderPath: playlistFolderPath,
       ),
     );
   }
@@ -90,6 +94,7 @@ class _PlayerPageState extends State<PlayerPage> {
   late List<String> _playlistPaths;
   late String _currentVideoPath;
   late String _playlistTitle;
+  late String _playlistFolderPath;
 
   @override
   void didChangeDependencies() {
@@ -106,6 +111,9 @@ class _PlayerPageState extends State<PlayerPage> {
     _playlistTitle = widget.playlistTitle?.trim().isNotEmpty == true
         ? widget.playlistTitle!.trim()
         : path.basename(path.dirname(_currentVideoPath));
+    _playlistFolderPath = widget.playlistFolderPath?.trim().isNotEmpty == true
+        ? widget.playlistFolderPath!.trim()
+        : path.dirname(_currentVideoPath);
     unawaited(_enterImmersiveMode());
     unawaited(_primeSystemLevels());
     _initializeVideo();
@@ -203,7 +211,15 @@ class _PlayerPageState extends State<PlayerPage> {
       });
     }
 
-    await _appController.ensureVideoImported(videoPath);
+    if (_playlistPaths.length > 1) {
+      await _appController.importVideos(
+        _playlistPaths,
+        folderPathOverride: _playlistFolderPath,
+        folderNameOverride: _playlistTitle,
+      );
+    } else {
+      await _appController.ensureVideoImported(videoPath);
+    }
     final record = _appController.recordForPath(videoPath);
     final controller = VideoPlayerController.file(File(videoPath));
 
@@ -983,15 +999,16 @@ class _PlayerPageState extends State<PlayerPage> {
                                         final sliderMax = durationMs == 0
                                             ? 1.0
                                             : durationMs.toDouble();
-                                        final sliderValue = (_isScrubbing
-                                                ? (_scrubPreviewMs ?? 0).clamp(
-                                                    0,
-                                                    sliderMax,
-                                                  )
-                                                : value.position.inMilliseconds
-                                                      .toDouble()
-                                                      .clamp(0, sliderMax))
-                                            .toDouble();
+                                        final sliderValue =
+                                            (_isScrubbing
+                                                    ? (_scrubPreviewMs ?? 0)
+                                                          .clamp(0, sliderMax)
+                                                    : value
+                                                          .position
+                                                          .inMilliseconds
+                                                          .toDouble()
+                                                          .clamp(0, sliderMax))
+                                                .toDouble();
                                         final shownPosition = Duration(
                                           milliseconds: sliderValue.round(),
                                         );

@@ -149,6 +149,11 @@ class SnozPlayerController extends ChangeNotifier {
     return folder?.folderName ?? path.basename(folderPath);
   }
 
+  String folderPathForPath(String videoPath) {
+    return libraryVideoForPath(videoPath)?.folderPath ??
+        path.dirname(videoPath);
+  }
+
   Future<void> importVideos(
     List<String> videoPaths, {
     String? folderPathOverride,

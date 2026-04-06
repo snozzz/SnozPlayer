@@ -64,6 +64,7 @@ class _LibraryPageState extends State<LibraryPage> {
           playlist: controller.playlistForPath(firstPath),
           initialIndex: controller.playlistIndexForPath(firstPath),
           playlistTitle: controller.folderNameForPath(firstPath),
+          playlistFolderPath: controller.folderPathForPath(firstPath),
         ),
       );
     } finally {
@@ -270,6 +271,9 @@ class _LibraryPageState extends State<LibraryPage> {
                               playlistTitle: controller.folderNameForPath(
                                 video.videoPath,
                               ),
+                              playlistFolderPath: controller.folderPathForPath(
+                                video.videoPath,
+                              ),
                             ),
                           );
                         },
@@ -306,6 +310,9 @@ class _LibraryPageState extends State<LibraryPage> {
                                 record.videoPath,
                               ),
                               playlistTitle: controller.folderNameForPath(
+                                record.videoPath,
+                              ),
+                              playlistFolderPath: controller.folderPathForPath(
                                 record.videoPath,
                               ),
                             ),
