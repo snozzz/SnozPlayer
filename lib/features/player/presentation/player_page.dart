@@ -254,6 +254,87 @@ class _PlayerPageState extends State<PlayerPage> {
     await _loadVideo(_currentVideoPath);
   }
 
+  Future<void> _showEpisodePicker() async {
+    if (_playlistPaths.length <= 1) {
+      return;
+    }
+
+    _showChromeNow();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF17141C),
+      barrierColor: Colors.black.withValues(alpha: 0.42),
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _playlistTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: AppPalette.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_playlistPaths.length} episodes',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: AppPalette.white.withValues(
+                                    alpha: 0.7,
+                                  ),
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: _playlistPaths.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final episodePath = _playlistPaths[index];
+                      final isCurrent = index == _currentIndex;
+                      return _EpisodeListTile(
+                        index: index,
+                        label: _episodeLabel(episodePath),
+                        isSelected: isCurrent,
+                        onTap: () async {
+                          Navigator.of(context).pop();
+                          await _switchEpisode(index);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _handleVideoTick() {
     if (!mounted) {
       return;
@@ -836,90 +917,6 @@ class _PlayerPageState extends State<PlayerPage> {
                                   ],
                                 ),
                               ),
-                              if (_playlistPaths.length > 1)
-                                Positioned(
-                                  left: 18,
-                                  right: 18,
-                                  bottom:
-                                      MediaQuery.of(context).padding.bottom +
-                                      116,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.32,
-                                      ),
-                                      borderRadius: BorderRadius.circular(24),
-                                      border: Border.all(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.08,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
-                                      ),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              left: 6,
-                                              bottom: 8,
-                                            ),
-                                            child: Text(
-                                              'Episodes',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .labelLarge
-                                                  ?.copyWith(
-                                                    color: AppPalette.white
-                                                        .withValues(
-                                                          alpha: 0.78,
-                                                        ),
-                                                    fontWeight: FontWeight.w700,
-                                                  ),
-                                            ),
-                                          ),
-                                          SingleChildScrollView(
-                                            scrollDirection: Axis.horizontal,
-                                            physics:
-                                                const BouncingScrollPhysics(),
-                                            child: Row(
-                                              children: [
-                                                for (
-                                                  var index = 0;
-                                                  index < _playlistPaths.length;
-                                                  index++
-                                                )
-                                                  Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                          right: 8,
-                                                        ),
-                                                    child: _EpisodeChip(
-                                                      label: _episodeLabel(
-                                                        _playlistPaths[index],
-                                                      ),
-                                                      index: index,
-                                                      isSelected:
-                                                          index ==
-                                                          _currentIndex,
-                                                      onTap: () =>
-                                                          _switchEpisode(index),
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
                               Positioned(
                                 left: 18,
                                 right: 18,
@@ -969,6 +966,15 @@ class _PlayerPageState extends State<PlayerPage> {
                                               ),
                                             ),
                                             const SizedBox(width: 10),
+                                            if (_playlistPaths.length > 1) ...[
+                                              _PillButton(
+                                                icon: Icons.view_list_rounded,
+                                                label:
+                                                    '${_currentIndex + 1}/${_playlistPaths.length}',
+                                                onTap: _showEpisodePicker,
+                                              ),
+                                              const SizedBox(width: 10),
+                                            ],
                                             PopupMenuButton<double>(
                                               initialValue: _selectedSpeed,
                                               onSelected: _setSelectedSpeed,
@@ -1149,16 +1155,16 @@ class _BoostZone extends StatelessWidget {
   }
 }
 
-class _EpisodeChip extends StatelessWidget {
-  const _EpisodeChip({
-    required this.label,
+class _EpisodeListTile extends StatelessWidget {
+  const _EpisodeListTile({
     required this.index,
+    required this.label,
     required this.isSelected,
     required this.onTap,
   });
 
-  final String label;
   final int index;
+  final String label;
   final bool isSelected;
   final VoidCallback onTap;
 
@@ -1166,25 +1172,24 @@ class _EpisodeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: isSelected
-          ? AppPalette.white.withValues(alpha: 0.22)
-          : Colors.white.withValues(alpha: 0.08),
+          ? Colors.white.withValues(alpha: 0.12)
+          : Colors.white.withValues(alpha: 0.04),
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 22,
-                height: 22,
+                width: 28,
+                height: 28,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: isSelected
                       ? AppPalette.peach.withValues(alpha: 0.95)
-                      : Colors.white.withValues(alpha: 0.12),
+                      : Colors.white.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Text(
@@ -1195,17 +1200,63 @@ class _EpisodeChip extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 140),
+              const SizedBox(width: 12),
+              Expanded(
                 child: Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: AppPalette.white,
                     fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                   ),
+                ),
+              ),
+              if (isSelected)
+                const Icon(
+                  Icons.play_circle_fill_rounded,
+                  color: AppPalette.peach,
+                  size: 20,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PillButton extends StatelessWidget {
+  const _PillButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: AppPalette.white),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: AppPalette.white,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
